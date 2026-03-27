@@ -9,3 +9,6 @@ security_audit.*
 frontend/.env
 
 frontend/.env
+
+frontend/.env
+backend/scripts/
