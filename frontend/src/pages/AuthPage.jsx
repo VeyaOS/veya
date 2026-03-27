@@ -365,7 +365,7 @@ function LoginForm({ onSwitch, onAuthenticated, googleEnabled }) {
           type="email"
           placeholder="amaka@example.com"
           value={email}
-          onChange={e => { setEmail(e.target.value); setErrors(p => ({ ...p, email: '', form: '', resend: '' })); }}
+          onChange={e => { setEmail(e.target.value.trim()); setErrors(p => ({ ...p, email: '', form: '', resend: '' })); }}
         />
         {errors.email && <div className="v-error">{errors.email}</div>}
       </div>
@@ -419,18 +419,39 @@ function SignupForm({ onSwitch, onVerificationPending, onAuthenticated, googleEn
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
 
+  const [invite, setInvite] = useState(null);
+
   const set = (key) => (e) => {
-    const val = e.target.value;
+    const val = key === 'email' ? e.target.value.trim() : e.target.value;
     setFields(f => ({ ...f, [key]: val }));
     setErrors(p => ({ ...p, [key]: '' }));
     if (key === 'pass') setStrength(val ? getStrength(val) : null);
+  };
+
+  const handleEmailBlur = async () => {
+    const email = fields.email.toLowerCase().trim();
+    if (!validateEmail(email)) return;
+
+    try {
+      const res = await api.get(`/auth/check-invite?email=${encodeURIComponent(email)}`);
+      if (res.data.isInvited) {
+        setInvite(res.data);
+        // Clear store field if invited since we won't use it
+        setFields(f => ({ ...f, store: 'STAFF_INVITE' }));
+      } else {
+        setInvite(null);
+        if (fields.store === 'STAFF_INVITE') setFields(f => ({ ...f, store: '' }));
+      }
+    } catch (err) {
+      console.error('Check invite error:', err);
+    }
   };
 
   const validate = () => {
     const errs = {};
     if (!fields.first.trim()) errs.first = 'First name is required';
     if (!fields.last.trim()) errs.last = 'Last name is required';
-    if (!fields.store.trim()) errs.store = 'Your store name is required';
+    if (!invite && !fields.store.trim()) errs.store = 'Your store name is required';
     if (!validateEmail(fields.email)) errs.email = 'Please enter a valid email address';
     if (!fields.pass || fields.pass.length < 8) errs.pass = 'Password must be at least 8 characters';
     if (!agreed) errs.agree = 'Please agree to the Terms of Service to continue.';
@@ -450,7 +471,7 @@ function SignupForm({ onSwitch, onVerificationPending, onAuthenticated, googleEn
         password: fields.pass,
         firstName: fields.first,
         lastName: fields.last,
-        storeName: fields.store
+        storeName: invite ? undefined : fields.store
       });
 
       onVerificationPending(
@@ -520,23 +541,33 @@ function SignupForm({ onSwitch, onVerificationPending, onAuthenticated, googleEn
         </div>
       </div>
 
-      <div className="v-form-group">
-        <div className="v-label">Business / Store name</div>
-        <div className="v-input-wrap">
-          <span className="v-input-prefix">veya.app/</span>
-          <input className={`v-input has-prefix${errors.store ? ' error' : ''}`} type="text" placeholder="Amaka's Fabrics" value={fields.store} onChange={set('store')} />
-        </div>
-        {fields.store && (
-          <div className="v-hint">
-            Your store URL: veya.app/{storeSlug}
+      {!invite ? (
+        <div className="v-form-group">
+          <div className="v-label">Business / Store name</div>
+          <div className="v-input-wrap">
+            <span className="v-input-prefix">veya.app/</span>
+            <input className={`v-input has-prefix${errors.store ? ' error' : ''}`} type="text" placeholder="Amaka's Fabrics" value={fields.store} onChange={set('store')} />
           </div>
-        )}
-        {errors.store && <div className="v-error">{errors.store}</div>}
-      </div>
+          {fields.store && (
+            <div className="v-hint">
+              Your store URL: veya.app/{storeSlug}
+            </div>
+          )}
+          {errors.store && <div className="v-error">{errors.store}</div>}
+        </div>
+      ) : (
+        <div className="v-form-group">
+          <div className="v-label">Store Connection</div>
+          <div className="v-input" style={{ background: 'var(--bg3)', borderColor: 'var(--gold-dim)', color: 'var(--gold)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span>🔗</span> Joining <strong>{invite.storeName}</strong> as <strong>{invite.role}</strong>
+          </div>
+          <div className="v-hint">Your account will be linked to this business automatically.</div>
+        </div>
+      )}
 
       <div className="v-form-group">
         <div className="v-label">Email address</div>
-        <input className={`v-input${errors.email ? ' error' : ''}`} type="email" placeholder="amaka@example.com" value={fields.email} onChange={set('email')} />
+        <input className={`v-input${errors.email ? ' error' : ''}`} type="email" placeholder="amaka@example.com" value={fields.email} onChange={set('email')} onBlur={handleEmailBlur} />
         {errors.email && <div className="v-error">{errors.email}</div>}
       </div>
 

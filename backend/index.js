@@ -37,7 +37,9 @@ const pool = new Pool({
   ssl: isProduction ? true : { rejectUnauthorized: false },
   max: 10,                  // max open connections
   idleTimeoutMillis: 30000, // close idle connections after 30s
-  connectionTimeoutMillis: 5000, // fail fast rather than hang
+  connectionTimeoutMillis: 20000, // allow enough time for Supabase pooler handshake on brief spikes
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10000,
 });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
@@ -57,6 +59,36 @@ function cacheSet(key, data) { _cache.set(key, { data, ts: Date.now() }); }
 function cacheInvalidate(merchantId) {
   _cache.delete(`stats:${merchantId}`);
   _cache.delete(`invoices:${merchantId}`);
+}
+
+const TRANSIENT_DB_ERROR_PATTERNS = [
+  /connection timeout/i,
+  /connection terminated unexpectedly/i,
+  /econnreset/i,
+  /etimedout/i
+];
+
+function isTransientDbError(error) {
+  const msg = `${error?.message || ''} ${error?.cause?.message || ''}`.toLowerCase();
+  return TRANSIENT_DB_ERROR_PATTERNS.some((pattern) => pattern.test(msg));
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function withDbRetry(task, { retries = 2, delayMs = 300 } = {}) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await task();
+    } catch (error) {
+      lastError = error;
+      if (!isTransientDbError(error) || attempt === retries) {
+        throw error;
+      }
+      await sleep(delayMs);
+    }
+  }
+  throw lastError;
 }
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -136,6 +168,14 @@ const requireAdmin = async (req, res, next) => {
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
+};
+
+// Permission middleware factory — owners (null permissions) get full access
+const requirePermission = (perm) => (req, res, next) => {
+  // If permissions is null, user is an owner — allow everything
+  if (!req.user.permissions) return next();
+  if (req.user.permissions[perm]) return next();
+  return res.status(403).json({ error: `Access denied: you do not have '${perm}' permission.` });
 };
 
 // ==================== SOCKET.IO MIDDLEWARE & HANDLERS ====================
@@ -253,18 +293,41 @@ async function logAdminAction(adminId, action, targetType, targetId, metadata = 
 
 const hashToken = (value) => crypto.createHash('sha256').update(value).digest('hex');
 
-const buildAuthUser = (user) => ({
+const buildAuthUser = (user, staffRecord = null) => ({
   id: user.id,
   email: user.email,
   firstName: user.firstName,
   lastName: user.lastName,
   emailVerified: user.emailVerified,
   role: user.role,
-  merchant: user.merchant
+  // For store owners, merchant is their own profile. For staff, it's the store they belong to.
+  merchant: user.merchant || (staffRecord ? { id: staffRecord.merchantId } : null),
+  // Staff-specific permission bundle (null for owners — they have all perms)
+  staffRole: staffRecord?.role || null,
+  permissions: staffRecord ? {
+    canCreateInvoices: staffRecord.canCreateInvoices,
+    canViewReports: staffRecord.canViewReports,
+    canManageStaff: staffRecord.canManageStaff,
+    canExportData: staffRecord.canExportData,
+    canEditSettings: staffRecord.canEditSettings,
+  } : null // null means owner — frontend treats null as full access
 });
 
-const issueAuthToken = (user) => jwt.sign(
-  { id: user.id, email: user.email, merchantId: user.merchant?.id || null, role: user.role },
+const issueAuthToken = (user, staffRecord = null) => jwt.sign(
+  {
+    id: user.id,
+    email: user.email,
+    merchantId: user.merchant?.id || staffRecord?.merchantId || null,
+    role: user.role,
+    // Bake permissions directly into JWT so middleware can check without a DB hit
+    permissions: staffRecord ? {
+      canCreateInvoices: staffRecord.canCreateInvoices,
+      canViewReports: staffRecord.canViewReports,
+      canManageStaff: staffRecord.canManageStaff,
+      canExportData: staffRecord.canExportData,
+      canEditSettings: staffRecord.canEditSettings,
+    } : null
+  },
   process.env.JWT_SECRET,
   { expiresIn: '7d' }
 );
@@ -295,22 +358,47 @@ async function sendVerificationLink(email, rawToken) {
 
 // ==================== AUTH ENDPOINTS ====================
 
+// Check if email has a pending staff invitation
+app.get('/api/auth/check-invite', async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const invite = await prisma.staffMember.findFirst({
+      where: { email: email.toLowerCase().trim() },
+      include: { merchant: { select: { storeName: true } } }
+    });
+
+    if (!invite) return res.json({ isInvited: false });
+
+    res.json({
+      isInvited: true,
+      storeName: invite.merchant?.storeName || 'a Veya store',
+      role: invite.role,
+    });
+  } catch (error) {
+    console.error('Check invite error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Sign Up
 app.post('/api/auth/signup', async (req, res) => {
   try {
     const { email, password, firstName, lastName, storeName } = req.body;
+    const normalizedEmail = (email || '').toLowerCase().trim();
 
-    if (!email || !password || !firstName || !lastName || !storeName) {
+    if (!normalizedEmail || !password || !firstName || !lastName) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const existingUser = await prisma.user.findUnique({ where: { email } });
+    const existingUser = await withDbRetry(() => prisma.user.findUnique({ where: { email: normalizedEmail } }));
     if (existingUser) {
       if (!existingUser.emailVerified) {
         return res.status(409).json({
           error: 'Email not verified. Please verify your account or request a new verification link.',
           needsVerification: true,
-          email
+          email: normalizedEmail
         });
       }
 
@@ -322,34 +410,67 @@ app.post('/api/auth/signup', async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const slug = await createUniqueMerchantSlug(storeName);
     const rawVerificationToken = crypto.randomBytes(32).toString('hex');
     const verificationTokenHash = hashToken(rawVerificationToken);
     const verificationExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
-    const user = await prisma.user.create({
-      data: {
-        email,
-        password: hashedPassword,
-        firstName,
-        lastName,
-        emailVerified: false,
-        verificationTokenHash,
-        verificationExpiresAt,
-        merchant: {
-          create: { storeName, slug, plan: 'FREE' }
-        }
-      },
-      include: { merchant: true }
-    });
+    // Check if this email has a pending staff invitation
+    const staffInvite = await withDbRetry(() => prisma.staffMember.findFirst({
+      where: { email: normalizedEmail }
+    }));
 
-    // Notify admins of new registration
-    notifyAdmins({
-      type: 'new_merchant',
-      title: 'New Merchant Joined',
-      body: `${storeName} (${email}) has registered.`,
-      link: `/admin/merchants`
-    }).catch(e => console.error('Notify admins failed:', e));
+    let user;
+    if (staffInvite) {
+      // ── STAFF SIGNUP PATH ──────────────────────────────────────────────────
+      // Do NOT create a new Merchant — link the user to the inviting store.
+      user = await withDbRetry(() => prisma.user.create({
+        data: {
+          email: normalizedEmail,
+          password: hashedPassword,
+          firstName,
+          lastName,
+          emailVerified: false,
+          verificationTokenHash,
+          verificationExpiresAt,
+          // No merchant relation — user belongs to the inviting store via StaffMember
+        },
+        include: { merchant: true }
+      }));
+
+      // Link the StaffMember record to this newly created user
+      await withDbRetry(() => prisma.staffMember.update({
+        where: { id: staffInvite.id },
+        data: { userId: user.id }
+      }));
+    } else {
+      // ── OWNER SIGNUP PATH ──────────────────────────────────────────────────
+      if (!storeName) return res.status(400).json({ error: 'Store name is required' });
+      const slug = await createUniqueMerchantSlug(storeName);
+
+      user = await withDbRetry(() => prisma.user.create({
+        data: {
+          email: normalizedEmail,
+          password: hashedPassword,
+          firstName,
+          lastName,
+          emailVerified: false,
+          verificationTokenHash,
+          verificationExpiresAt,
+          merchant: {
+            create: { storeName, slug, plan: 'FREE' }
+          }
+        },
+        include: { merchant: true }
+      }));
+
+      // Notify admins of new merchant registration
+      notifyAdmins({
+        type: 'new_merchant',
+        title: 'New Merchant Joined',
+        body: `${storeName} (${normalizedEmail}) has registered.`,
+        link: `/admin/merchants`
+      }).catch(e => console.error('Notify admins failed:', e));
+    }
 
     try {
       await sendVerificationLink(user.email, rawVerificationToken);
@@ -377,11 +498,12 @@ app.post('/api/auth/signup', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
+    const normalizedEmail = (email || '').toLowerCase().trim();
 
-    const user = await prisma.user.findUnique({
-      where: { email },
+    const user = await withDbRetry(() => prisma.user.findUnique({
+      where: { email: normalizedEmail },
       include: { merchant: true }
-    });
+    }));
 
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -404,11 +526,19 @@ app.post('/api/auth/login', async (req, res) => {
       });
     }
 
-    const token = issueAuthToken(user);
+    // Check if this user is a staff member (no merchant of their own)
+    let staffRecord = null;
+    if (!user.merchant) {
+      staffRecord = await withDbRetry(() => prisma.staffMember.findFirst({
+        where: { userId: user.id }
+      }));
+    }
+
+    const token = issueAuthToken(user, staffRecord);
 
     res.json({
       token,
-      user: buildAuthUser(user)
+      user: buildAuthUser(user, staffRecord)
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -424,23 +554,23 @@ app.post('/api/auth/resend-verification', verificationLimiter, async (req, res) 
     }
 
     const genericMessage = 'If an unverified account exists, a verification email has been sent.';
-    const user = await prisma.user.findUnique({
+    const user = await withDbRetry(() => prisma.user.findUnique({
       where: { email },
       include: { merchant: true }
-    });
+    }));
 
     if (!user || user.emailVerified || !user.password) {
       return res.json({ message: genericMessage });
     }
 
     const rawVerificationToken = crypto.randomBytes(32).toString('hex');
-    await prisma.user.update({
+    await withDbRetry(() => prisma.user.update({
       where: { id: user.id },
       data: {
         verificationTokenHash: hashToken(rawVerificationToken),
         verificationExpiresAt: new Date(Date.now() + 15 * 60 * 1000)
       }
-    });
+    }));
 
     await sendVerificationLink(user.email, rawVerificationToken);
     res.json({ message: genericMessage });
@@ -457,19 +587,19 @@ app.post('/api/auth/verify-email', verificationLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Verification token is required' });
     }
 
-    const user = await prisma.user.findFirst({
+    const user = await withDbRetry(() => prisma.user.findFirst({
       where: {
         verificationTokenHash: hashToken(token),
         verificationExpiresAt: { gt: new Date() }
       },
       include: { merchant: true }
-    });
+    }));
 
     if (!user) {
       return res.status(400).json({ error: 'Invalid or expired verification link' });
     }
 
-    const verifiedUser = await prisma.user.update({
+    const verifiedUser = await withDbRetry(() => prisma.user.update({
       where: { id: user.id },
       data: {
         emailVerified: true,
@@ -477,13 +607,21 @@ app.post('/api/auth/verify-email', verificationLimiter, async (req, res) => {
         verificationExpiresAt: null
       },
       include: { merchant: true }
-    });
+    }));
 
-    const authToken = issueAuthToken(verifiedUser);
+    // Detect if this is a staff account
+    let staffRecord = null;
+    if (!verifiedUser.merchant) {
+      staffRecord = await withDbRetry(() => prisma.staffMember.findFirst({
+        where: { userId: verifiedUser.id }
+      }));
+    }
+
+    const authToken = issueAuthToken(verifiedUser, staffRecord);
 
     res.json({
       token: authToken,
-      user: buildAuthUser(verifiedUser)
+      user: buildAuthUser(verifiedUser, staffRecord)
     });
   } catch (error) {
     console.error('Verify email error:', error);
@@ -496,7 +634,7 @@ app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await withDbRetry(() => prisma.user.findUnique({ where: { email } }));
     if (!user || !user.password) {
       // Generic success for security
       return res.json({ message: 'If an account exists with this email, a reset link has been sent.' });
@@ -505,13 +643,13 @@ app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
     const rawToken = crypto.randomBytes(32).toString('hex');
     const hashedToken = hashToken(rawToken);
     
-    await prisma.user.update({
+    await withDbRetry(() => prisma.user.update({
       where: { id: user.id },
       data: {
         resetToken: hashedToken,
         resetExpires: new Date(Date.now() + 3600000) // 1 hour
       }
-    });
+    }));
 
     const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${encodeURIComponent(rawToken)}`;
     await sendPasswordResetEmail(user.email, resetUrl);
@@ -529,12 +667,12 @@ app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
     if (!token || !password) return res.status(400).json({ error: 'Token and new password are required' });
 
     const hashedToken = hashToken(token);
-    const user = await prisma.user.findFirst({
+    const user = await withDbRetry(() => prisma.user.findFirst({
       where: {
         resetToken: hashedToken,
         resetExpires: { gt: new Date() }
       }
-    });
+    }));
 
     if (!user) {
       return res.status(400).json({ error: 'Invalid or expired reset link' });
@@ -542,7 +680,7 @@ app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
 
     const newHashedPassword = await bcrypt.hash(password, 10);
 
-    await prisma.user.update({
+    await withDbRetry(() => prisma.user.update({
       where: { id: user.id },
       data: {
         password: newHashedPassword,
@@ -550,7 +688,7 @@ app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
         resetExpires: null,
         passwordChangedAt: new Date()
       }
-    });
+    }));
 
     res.json({ message: 'Password has been successfully reset' });
   } catch (error) {
@@ -585,10 +723,10 @@ app.post('/api/auth/google', async (req, res) => {
       return res.status(400).json({ error: 'Google account email is not verified' });
     }
 
-    let user = await prisma.user.findUnique({
+    let user = await withDbRetry(() => prisma.user.findUnique({
       where: { email },
       include: { merchant: true }
-    });
+    }));
 
     if (user) {
       if (user.googleId && user.googleId !== googleId) {
@@ -596,7 +734,7 @@ app.post('/api/auth/google', async (req, res) => {
       }
 
       if (!user.googleId || !user.emailVerified) {
-        user = await prisma.user.update({
+        user = await withDbRetry(() => prisma.user.update({
           where: { id: user.id },
           data: {
             googleId,
@@ -605,11 +743,11 @@ app.post('/api/auth/google', async (req, res) => {
             verificationExpiresAt: null
           },
           include: { merchant: true }
-        });
+        }));
       }
     } else {
       const slug = await createUniqueMerchantSlug(`${givenName} ${familyName}`.trim() || email.split('@')[0]);
-      user = await prisma.user.create({
+      user = await withDbRetry(() => prisma.user.create({
         data: {
           email,
           password: null,
@@ -626,7 +764,7 @@ app.post('/api/auth/google', async (req, res) => {
           }
         },
         include: { merchant: true }
-      });
+      }));
     }
 
     const token = issueAuthToken(user);
@@ -643,10 +781,14 @@ app.post('/api/auth/google', async (req, res) => {
 // Get public invoice (no auth required)
 app.get('/api/invoices/public/:invoiceNum', async (req, res) => {
   try {
-    const { invoiceNum } = req.params;
+    const normalizedInvoiceNum = (req.params.invoiceNum || '').trim().toUpperCase();
 
-    const invoice = await prisma.invoice.findUnique({
-      where: { invoiceNum },
+    if (!normalizedInvoiceNum) {
+      return res.status(400).json({ error: 'Invoice number is required' });
+    }
+
+    const invoice = await withDbRetry(() => prisma.invoice.findUnique({
+      where: { invoiceNum: normalizedInvoiceNum },
       select: {
         id: true,
         invoiceNum: true,
@@ -666,17 +808,17 @@ app.get('/api/invoices/public/:invoiceNum', async (req, res) => {
           }
         }
       }
-    });
+    }));
 
     if (!invoice) {
       return res.status(404).json({ error: 'Invoice not found' });
     }
 
     if (invoice.expiresAt < new Date() && invoice.status === 'PENDING') {
-      await prisma.invoice.update({
+      await withDbRetry(() => prisma.invoice.update({
         where: { id: invoice.id },
         data: { status: 'EXPIRED' }
-      });
+      }));
       invoice.status = 'EXPIRED';
     }
 
@@ -706,9 +848,15 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    res.json({
-      ...buildAuthUser(user)
-    });
+    // Re-fetch staff record if user has no merchant
+    let staffRecord = null;
+    if (!user.merchant) {
+      staffRecord = await prisma.staffMember.findFirst({
+        where: { userId: user.id }
+      });
+    }
+
+    res.json({ ...buildAuthUser(user, staffRecord) });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -793,7 +941,7 @@ app.patch('/api/notifications/:id/read', authenticateToken, async (req, res) => 
 // ==================== DASHBOARD ENDPOINTS ====================
 
 // Get merchant stats (cached for 90s per merchant)
-app.get('/api/merchant/stats', authenticateToken, async (req, res) => {
+app.get('/api/merchant/stats', authenticateToken, requirePermission('canViewReports'), async (req, res) => {
   try {
     const merchantId = req.user.merchantId;
     const cacheKey = `stats:${merchantId}`;
@@ -802,7 +950,7 @@ app.get('/api/merchant/stats', authenticateToken, async (req, res) => {
     if (hit) return res.json(hit);
 
     const t = Date.now();
-    const [totalVolume, invoiceCounts, customers] = await Promise.all([
+    const [totalVolume, invoiceCounts, customers] = await withDbRetry(() => Promise.all([
       prisma.invoice.aggregate({
         where: { merchantId, status: 'PAID' },
         _sum: { amount: true }
@@ -813,7 +961,7 @@ app.get('/api/merchant/stats', authenticateToken, async (req, res) => {
         _count: { _all: true }
       }),
       prisma.customer.count({ where: { merchantId } })
-    ]);
+    ]));
     console.log(`📊 stats in ${Date.now() - t}ms`);
 
     const invoicesPaid = invoiceCounts.find(i => i.status === 'PAID')?._count?._all || 0;
@@ -840,7 +988,7 @@ app.get('/api/invoices', authenticateToken, async (req, res) => {
     const merchantId = req.user.merchantId;
     const { status, limit = 50 } = req.query;
 
-    const invoices = await prisma.invoice.findMany({
+    const invoices = await withDbRetry(() => prisma.invoice.findMany({
       where: {
         merchantId,
         ...(status && status !== 'ALL' && { status })
@@ -848,7 +996,7 @@ app.get('/api/invoices', authenticateToken, async (req, res) => {
       include: { customer: true },
       orderBy: { createdAt: 'desc' },
       take: parseInt(limit)
-    });
+    }));
 
     res.json(invoices);
   } catch (error) {
@@ -864,14 +1012,14 @@ app.post('/api/invoices', authenticateToken, async (req, res) => {
     const { amount, customerName, reference, expiryHours = 24 } = req.body;
 
     // Find or create customer
-    let customer = await prisma.customer.findFirst({
+    let customer = await withDbRetry(() => prisma.customer.findFirst({
       where: { merchantId, name: customerName }
-    });
+    }));
 
     if (!customer && customerName) {
-      customer = await prisma.customer.create({
+      customer = await withDbRetry(() => prisma.customer.create({
         data: { merchantId, name: customerName }
-      });
+      }));
     }
 
     // Generate invoice number using UUID to avoid race conditions
@@ -884,7 +1032,7 @@ app.post('/api/invoices', authenticateToken, async (req, res) => {
     const mockPaymentAddr = `rgb:${invoiceNum.toLowerCase().replace('-', '')}${Math.random().toString(36).substring(7)}`;
 
     // Create invoice
-    const invoice = await prisma.invoice.create({
+    const invoice = await withDbRetry(() => prisma.invoice.create({
       data: {
         invoiceNum,
         merchantId,
@@ -896,7 +1044,7 @@ app.post('/api/invoices', authenticateToken, async (req, res) => {
         paymentAddr: mockPaymentAddr
       },
       include: { customer: true }
-    });
+    }));
 
     cacheInvalidate(merchantId);
     res.json({
@@ -911,7 +1059,7 @@ app.post('/api/invoices', authenticateToken, async (req, res) => {
 });
 
 // Get customers — uses precomputed totalPaid / invoiceCount columns (no JOIN on invoices)
-app.get('/api/customers', authenticateToken, async (req, res) => {
+app.get('/api/customers', authenticateToken, requirePermission('canViewReports'), async (req, res) => {
   try {
     const merchantId = req.user.merchantId;
 
@@ -944,10 +1092,11 @@ app.get('/api/customers', authenticateToken, async (req, res) => {
 app.get('/api/staff', authenticateToken, async (req, res) => {
   try {
     const merchantId = req.user.merchantId;
-    const staff = await prisma.staffMember.findMany({
+    const staff = await withDbRetry(() => prisma.staffMember.findMany({
       where: { merchantId },
+      include: { user: true },
       orderBy: { createdAt: 'desc' }
-    });
+    }));
     res.json(staff);
   } catch (error) {
     console.error('Staff error:', error);
@@ -956,7 +1105,7 @@ app.get('/api/staff', authenticateToken, async (req, res) => {
 });
 
 // Invite staff member
-app.post('/api/staff/invite', authenticateToken, async (req, res) => {
+app.post('/api/staff/invite', authenticateToken, requirePermission('canManageStaff'), async (req, res) => {
   try {
     const merchantId = req.user.merchantId;
     const { email, role, canCreateInvoices, canViewReports, canManageStaff, canExportData, canEditSettings } = req.body;
@@ -981,7 +1130,7 @@ app.post('/api/staff/invite', authenticateToken, async (req, res) => {
 });
 
 // Update staff member
-app.put('/api/staff/:id', authenticateToken, async (req, res) => {
+app.put('/api/staff/:id', authenticateToken, requirePermission('canManageStaff'), async (req, res) => {
   try {
     const merchantId = req.user.merchantId;
     const { id } = req.params;
@@ -1007,7 +1156,7 @@ app.put('/api/staff/:id', authenticateToken, async (req, res) => {
 });
 
 // GET /api/merchant/revenue?period=7d
-app.get('/api/merchant/revenue', authenticateToken, async (req, res) => {
+app.get('/api/merchant/revenue', authenticateToken, requirePermission('canViewReports'), async (req, res) => {
   try {
     const merchantId = req.user.merchantId;
     const { period = '7d' } = req.query;
@@ -1015,11 +1164,11 @@ app.get('/api/merchant/revenue', authenticateToken, async (req, res) => {
     const since = new Date();
     since.setDate(since.getDate() - days);
 
-    const invoices = await prisma.invoice.findMany({
-      where: { merchantId, status: 'PAID', settledAt: { gte: since } },
-      select: { amount: true, settledAt: true },
-      orderBy: { settledAt: 'asc' }
-    });
+    const invoices = await withDbRetry(() => prisma.invoice.findMany({
+      where: { merchantId, status: 'PAID', createdAt: { gte: since } },
+      select: { amount: true, createdAt: true },
+      orderBy: { createdAt: 'asc' }
+    }));
 
     const grouped = {};
     for (let i = 0; i < days; i++) {
@@ -1028,8 +1177,8 @@ app.get('/api/merchant/revenue', authenticateToken, async (req, res) => {
       grouped[d.toISOString().split('T')[0]] = 0;
     }
     invoices.forEach(inv => {
-      if (inv.settledAt) {
-        const key = new Date(inv.settledAt).toISOString().split('T')[0];
+      if (inv.createdAt) {
+        const key = new Date(inv.createdAt).toISOString().split('T')[0];
         if (grouped[key] !== undefined) grouped[key] += Number(inv.amount || 0);
       }
     });

@@ -24,6 +24,7 @@ model User {
   verificationExpiresAt DateTime? @map("verification_expires_at")
   createdAt             DateTime  @default(now())
   merchant              Merchant?
+  staffMember           StaffMember?  // set if this user was invited as staff
   role                  UserRole  @default(USER)
   resetToken            String?
   resetExpires          DateTime?
@@ -99,6 +100,8 @@ model StaffMember {
   id                 String   @id @default(cuid())
   merchantId         String
   merchant           Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  userId             String?  @unique  // linked once the invitee creates their account
+  user               User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   email              String
   role               Role     @default(CASHIER)
   canCreateInvoices  Boolean  @default(true)

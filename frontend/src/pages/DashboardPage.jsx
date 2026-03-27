@@ -529,7 +529,6 @@ function InvoiceModal({show, onClose, onCreated}) {
       });
 
       onCreated(newInvoice);
-      alert(`Invoice created! Share this link with your customer:\n${response.data.paymentLink}`);
       setStep(2);
     } catch (error) {
       console.error('Failed to create invoice:', error);
@@ -658,68 +657,77 @@ function Toast({message, show}) {
 }
 
 /* ─── PAGE: DASHBOARD ─── */
-function PageDashboard({ onNewInvoice, onNav, realStats, realInvoices, loading }) {
+function PageDashboard({ user, onNewInvoice, onNav, realStats, realInvoices, loading }) {
   const [chartTab, setChartTab] = useState('7d');
 
   return (
     <>
       <div className="vd-stats-grid">
-        {loading ? (
-          <>
-            {[1, 2, 3, 4].map(i => (
-              <div key={i} className="vd-stat-card" style={{ opacity: 0.6 }}>
-                <div className="vd-stat-label">Loading...</div>
-                <div className="vd-stat-val">—</div>
+        {!user?.permissions || user?.permissions?.canViewReports ? (
+          loading ? (
+            <>
+              {[1, 2, 3, 4].map(i => (
+                <div key={i} className="vd-stat-card" style={{ opacity: 0.6 }}>
+                  <div className="vd-stat-label">Loading...</div>
+                  <div className="vd-stat-val">—</div>
+                </div>
+              ))}
+            </>
+          ) : (
+            <>
+              <div className="vd-stat-card highlight">
+                <div className="vd-stat-label">Total Volume</div>
+                <div className="vd-stat-val">{Number(realStats.totalVolume || 0).toLocaleString()} <span className="vd-stat-unit">USDT</span></div>
+                <span className="vd-stat-trend vd-trend-up">From real transactions</span>
               </div>
-            ))}
-          </>
+              <div className="vd-stat-card">
+                <div className="vd-stat-label">Paid Invoices</div>
+                <div className="vd-stat-val">{realStats.invoicesPaid}</div>
+                <span className="vd-stat-trend vd-trend-up">Settled</span>
+              </div>
+              <div className="vd-stat-card">
+                <div className="vd-stat-label">Pending</div>
+                <div className="vd-stat-val">{realStats.pending}</div>
+                <span className="vd-stat-trend">Awaiting payment</span>
+              </div>
+              <div className="vd-stat-card">
+                <div className="vd-stat-label">Customers</div>
+                <div className="vd-stat-val">{realStats.customers}</div>
+                <span className="vd-stat-trend vd-trend-up">Total customers</span>
+              </div>
+            </>
+          )
         ) : (
-          <>
-            <div className="vd-stat-card highlight">
-              <div className="vd-stat-label">Total Volume</div>
-              <div className="vd-stat-val">{Number(realStats.totalVolume || 0).toLocaleString()} <span className="vd-stat-unit">USDT</span></div>
-              <span className="vd-stat-trend vd-trend-up">From real transactions</span>
-            </div>
-            <div className="vd-stat-card">
-              <div className="vd-stat-label">Paid Invoices</div>
-              <div className="vd-stat-val">{realStats.invoicesPaid}</div>
-              <span className="vd-stat-trend vd-trend-up">Settled</span>
-            </div>
-            <div className="vd-stat-card">
-              <div className="vd-stat-label">Pending</div>
-              <div className="vd-stat-val">{realStats.pending}</div>
-              <span className="vd-stat-trend">Awaiting payment</span>
-            </div>
-            <div className="vd-stat-card">
-              <div className="vd-stat-label">Customers</div>
-              <div className="vd-stat-val">{realStats.customers}</div>
-              <span className="vd-stat-trend vd-trend-up">Total customers</span>
-            </div>
-          </>
+          <div className="vd-stat-card highlight" style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '40px' }}>
+            <div className="vd-stat-val" style={{ fontSize: '24px', fontStyle: 'italic', color: 'var(--gold)' }}>Welcome back, {user?.firstName}!</div>
+            <div className="vd-stat-label" style={{ marginTop: '8px', textTransform: 'none', letterSpacing: '0' }}>You are logged in to <strong>{user?.merchant?.storeName}</strong> as a <strong>{user?.staffRole || 'Staff Member'}</strong>.</div>
+          </div>
         )}
       </div>
       <div className="vd-grid2">
-        <div className="vd-card">
-          <div className="vd-card-header">
-            <div><div className="vd-card-title"><span className="vd-live-dot"/>Revenue Overview</div><div className="vd-card-sub">Settlement volume in USDT</div></div>
-            <div className="vd-tab-row">
-              {['7d','1m','3m'].map(t => (
-                <button key={t} className={`vd-tab${chartTab===t?' active':''}`} onClick={()=>setChartTab(t)}>{t.toUpperCase()}</button>
-              ))}
+        {(!user?.permissions || user?.permissions?.canViewReports) && (
+          <div className="vd-card">
+            <div className="vd-card-header">
+              <div><div className="vd-card-title"><span className="vd-live-dot"/>Revenue Overview</div><div className="vd-card-sub">Settlement volume in USDT</div></div>
+              <div className="vd-tab-row">
+                {['7d','1m','3m'].map(t => (
+                  <button key={t} className={`vd-tab${chartTab===t?' active':''}`} onClick={()=>setChartTab(t)}>{t.toUpperCase()}</button>
+                ))}
+              </div>
+            </div>
+            <div className="vd-chart-wrap">
+              {realInvoices.filter(i => i.status === 'PAID').length === 0 ? (
+                <div style={{height:140,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text3)',flexDirection:'column',gap:8}}>
+                  <span style={{fontSize:32,opacity:0.3}}>📊</span>
+                  <span style={{fontSize:12}}>No revenue data yet. Create your first invoice to see the chart.</span>
+                </div>
+              ) : (
+                <RevenueChart data={CHARTS[chartTab]}/>
+              )}
             </div>
           </div>
-          <div className="vd-chart-wrap">
-            {realInvoices.filter(i => i.status === 'PAID').length === 0 ? (
-              <div style={{height:140,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text3)',flexDirection:'column',gap:8}}>
-                <span style={{fontSize:32,opacity:0.3}}>📊</span>
-                <span style={{fontSize:12}}>No revenue data yet. Create your first invoice to see the chart.</span>
-              </div>
-            ) : (
-              <RevenueChart data={CHARTS[chartTab]}/>
-            )}
-          </div>
-        </div>
-        <div className="vd-card">
+        )}
+        <div className="vd-card" style={(!user?.permissions || user?.permissions?.canViewReports) ? {} : { gridColumn: '1 / -1' }}>
           <div className="vd-card-header"><div><div className="vd-card-title">Quick Actions</div><div className="vd-card-sub">Common tasks</div></div></div>
           <div className="vd-quick-grid">
             {[
@@ -784,7 +792,7 @@ function PageDashboard({ onNewInvoice, onNav, realStats, realInvoices, loading }
               <div className="vd-empty">No activity yet</div>
             ) : (
               realInvoices.slice(0, 4).map((inv, i) => (
-                <div className="vd-activity-item" key={inv.id}>
+                <div className="vd-activity-item" key={inv.id} style={{cursor:'pointer'}} onClick={() => window.open(`/pay/${inv.invoiceNum}`, '_blank')}>
                   <div className="vd-act-dot-wrap">
                     <div className="vd-act-dot" style={{
                       background: inv.status === 'PAID' ? '#22c55e' :
@@ -839,15 +847,28 @@ function PageInvoices({realInvoices, onNewInvoice, loading}) {
           {loading ? (
             <div className="vd-empty">Loading your invoices...</div>
           ) : filtered.length ? filtered.map((inv) => (
-            <div key={inv.id} className="vd-invoice-item">
+            <div key={inv.id} className="vd-invoice-item" onClick={() => window.open(`/pay/${inv.invoiceNum}`, '_blank')}>
               <div className={`vd-inv-icon ${inv.status.toLowerCase()}`}>{inv.status === 'PAID' ? '✓' : inv.status === 'PENDING' ? '◉' : '○'}</div>
               <div style={{flex:1,minWidth:0}}>
                 <div className="vd-inv-name">{inv.customer?.name || 'Customer'}</div>
                 <div className="vd-inv-meta">{inv.invoiceNum} · {inv.reference}</div>
               </div>
-              <div>
-                <div className="vd-inv-usdt">{Number(inv.amount || 0).toLocaleString()} USDT</div>
-                <div className={`vd-inv-status ${inv.status.toLowerCase()}`}>{inv.status.toLowerCase()}</div>
+              <div style={{display:'flex', alignItems:'center', gap:15}}>
+                <div style={{textAlign:'right'}}>
+                  <div className="vd-inv-usdt">{Number(inv.amount || 0).toLocaleString()} USDT</div>
+                  <div className={`vd-inv-status ${inv.status.toLowerCase()}`}>{inv.status.toLowerCase()}</div>
+                </div>
+                <button 
+                  className="vd-btn vd-btn-ghost vd-btn-sm" 
+                  style={{fontSize:11, padding:'4px 8px'}}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigator.clipboard.writeText(`${window.location.origin}/pay/${inv.invoiceNum}`);
+                    alert('Payment link copied to clipboard!');
+                  }}
+                >
+                  Link
+                </button>
               </div>
             </div>
           )) : (
@@ -1879,8 +1900,13 @@ export default function DashboardPage() {
    * Phase 2: fetch customers + staff silently in the background.
    */
   const fetchData = async ({ showLoading = true } = {}) => {
+    let loadingGuard = null;
     try {
-      if (showLoading) setLoading(true);
+      if (showLoading) {
+        setLoading(true);
+        // Never keep the whole dashboard blocked for too long on slow network/DB.
+        loadingGuard = setTimeout(() => setLoading(false), 3500);
+      }
 
       // ── Phase 1: critical path (stats + invoices only) ────────────────────
       const [statsRes, invoicesRes] = await Promise.allSettled([
@@ -1910,6 +1936,7 @@ export default function DashboardPage() {
     } catch (error) {
       console.error('Dashboard fetch error:', error);
     } finally {
+      if (loadingGuard) clearTimeout(loadingGuard);
       // Dashboard is renderable — clear the loading gate immediately
       if (showLoading) setLoading(false);
     }
@@ -1965,9 +1992,7 @@ export default function DashboardPage() {
   };
 
   const handleCreated = async () => {
-    setModalOpen(false);
     await fetchData({ showLoading: false });
-    setPage('invoices');
     showToast('Invoice created successfully');
   };
 
@@ -1977,26 +2002,26 @@ export default function DashboardPage() {
       items: [
         { id: 'dashboard', icon: '⬡', label: 'Dashboard' },
         { id: 'invoices', icon: '◫', label: 'Invoices', badge: realInvoices.filter((inv) => inv.status === 'PENDING').length || undefined },
-        { id: 'transactions', icon: '⇅', label: 'Transactions' },
-        { id: 'customers', icon: '◎', label: 'Customers' },
-      ],
+        { id: 'transactions', icon: '⇅', label: 'Transactions', permission: 'canViewReports' },
+        { id: 'customers', icon: '◎', label: 'Customers', permission: 'canViewReports' },
+      ].filter(item => !item.permission || !user?.permissions || user?.permissions[item.permission]),
     },
     {
       section: 'Operations',
       items: [
-        { id: 'reports', icon: '▣', label: 'Reports' },
-        { id: 'staff', icon: '✦', label: 'Staff' },
+        { id: 'reports', icon: '▣', label: 'Reports', permission: 'canViewReports' },
+        { id: 'staff', icon: '✦', label: 'Staff', permission: 'canManageStaff' },
         { id: 'support', icon: '☏', label: 'Support' },
-      ],
+      ].filter(item => !item.permission || !user?.permissions || user?.permissions[item.permission]),
     },
     {
       section: 'Platform',
       items: [
-        { id: 'wallet', icon: '◇', label: 'Wallet' },
-        { id: 'settings', icon: '⊙', label: 'Settings' },
-      ],
+        { id: 'wallet', icon: '◇', label: 'Wallet', permission: 'canEditSettings' },
+        { id: 'settings', icon: '⊙', label: 'Settings', permission: 'canEditSettings' },
+      ].filter(item => !item.permission || !user?.permissions || user?.permissions[item.permission]),
     },
-  ];
+  ].filter(sec => sec.items.length > 0);
 
   return (
     <>
@@ -2038,7 +2063,7 @@ export default function DashboardPage() {
               </div>
               <div style={{flex:1,minWidth:0}}>
                 <div className="vd-user-name">{user?.firstName || ''} {user?.lastName || ''}</div>
-                <div className="vd-user-role">Owner · Veya Pro</div>
+                <div className="vd-user-role">{user?.staffRole ? user.staffRole.charAt(0) + user.staffRole.slice(1).toLowerCase() : 'Owner'} · Veya Pro</div>
               </div>
               <span style={{color:'var(--text3)',fontSize:11}}>⋯</span>
             </div>
@@ -2068,6 +2093,7 @@ export default function DashboardPage() {
           <div className="vd-content">
             {page === 'dashboard' && (
               <PageDashboard
+                user={user}
                 onNewInvoice={() => setModalOpen(true)}
                 onNav={setPage}
                 realStats={realStats}
