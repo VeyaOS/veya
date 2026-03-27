@@ -7,3 +7,5 @@ backend/prisma/dev.db
 # Sensitive Audit Reports
 security_audit.*
 frontend/.env
+
+frontend/.env
