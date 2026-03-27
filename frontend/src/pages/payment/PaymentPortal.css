@@ -1,0 +1,562 @@
+.payment-portal {
+  min-height: 100vh;
+  background: #0a0a0b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+.payment-container {
+  max-width: 560px;
+  width: 100%;
+  background: #111114;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 24px;
+  padding: 2rem;
+  animation: fadeInUp 0.5s ease;
+}
+
+.payment-container.confirmed {
+  border-color: rgba(34, 197, 94, 0.3);
+  box-shadow: 0 0 40px rgba(34, 197, 94, 0.1);
+}
+
+.payment-container.expired {
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+/* Merchant Info */
+.merchant-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.merchant-avatar {
+  width: 56px;
+  height: 56px;
+  background: linear-gradient(135deg, #f5a623, #e8931a);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  font-weight: 700;
+  color: #0a0a0b;
+  font-family: 'Playfair Display', serif;
+}
+
+.merchant-name {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #f0ede8;
+  margin-bottom: 0.25rem;
+}
+
+.merchant-verified {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.verified-badge {
+  font-size: 0.7rem;
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.1);
+  padding: 0.2rem 0.5rem;
+  border-radius: 20px;
+}
+
+/* Amount Section */
+.amount-section {
+  text-align: center;
+  margin-bottom: 2rem;
+  padding: 1.5rem;
+  background: #0a0a0b;
+  border-radius: 16px;
+}
+
+.amount-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #5a5750;
+  margin-bottom: 0.5rem;
+}
+
+.amount-value {
+  font-family: 'Playfair Display', serif;
+  font-size: 3rem;
+  font-weight: 700;
+  color: #f5a623;
+  line-height: 1;
+}
+
+.amount-currency {
+  font-size: 1.25rem;
+  font-weight: 400;
+  color: #9e9b94;
+}
+
+.amount-fee {
+  font-size: 0.7rem;
+  color: #5a5750;
+  margin-top: 0.5rem;
+}
+
+/* Invoice Details */
+.invoice-details {
+  background: #0a0a0b;
+  border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.detail-row:last-child {
+  border-bottom: none;
+}
+
+.detail-label {
+  font-size: 0.75rem;
+  color: #5a5750;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.detail-value {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #f0ede8;
+}
+
+/* Timer Section */
+.timer-section {
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+.timer-label {
+  font-size: 0.7rem;
+  color: #5a5750;
+  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.timer-urgent {
+  color: #ef4444;
+  font-weight: 600;
+  animation: pulse 1s infinite;
+}
+
+.timer-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.timer-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.timer-bar-fill {
+  height: 100%;
+  transition: width 1s linear;
+}
+
+/* QR Section */
+.qr-section {
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.qr-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #5a5750;
+  margin-bottom: 1rem;
+}
+
+.qr-code {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
+.qr-placeholder {
+  background: #ffffff;
+  padding: 0.5rem;
+  border-radius: 16px;
+}
+
+/* Address Section */
+.address-section {
+  background: #0a0a0b;
+  border-radius: 12px;
+  padding: 1rem;
+  margin-top: 1rem;
+}
+
+.address-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #5a5750;
+  margin-bottom: 0.5rem;
+}
+
+.address-value {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.address-code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: #9e9b94;
+  background: #111114;
+  padding: 0.5rem;
+  border-radius: 8px;
+  flex: 1;
+  word-break: break-all;
+}
+
+.copy-btn {
+  background: #18181d;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  font-size: 0.7rem;
+  color: #f0ede8;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.copy-btn:hover {
+  background: #1e1e25;
+  border-color: rgba(245, 166, 35, 0.3);
+}
+
+.copy-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Wallet Options */
+.wallet-options {
+  margin: 1.5rem 0;
+  text-align: center;
+}
+
+.wallet-label {
+  font-size: 0.7rem;
+  color: #5a5750;
+  margin-bottom: 0.75rem;
+}
+
+.wallet-buttons {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+}
+
+.wallet-btn {
+  background: #18181d;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  font-size: 0.75rem;
+  color: #9e9b94;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.wallet-btn:hover {
+  background: #1e1e25;
+  color: #f0ede8;
+  border-color: rgba(245, 166, 35, 0.3);
+}
+
+/* Detector Section */
+.detector-section {
+  text-align: center;
+  margin: 1.5rem 0;
+  padding: 1rem;
+  background: #0a0a0b;
+  border-radius: 12px;
+}
+
+.detector-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(245, 166, 35, 0.2);
+  border-top-color: #f5a623;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 0.75rem;
+}
+
+.detector-section p {
+  font-size: 0.85rem;
+  color: #9e9b94;
+}
+
+.detector-note {
+  font-size: 0.7rem;
+  color: #5a5750;
+  margin-top: 0.5rem;
+}
+
+/* Confirmed State */
+.success-animation {
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.success-circle {
+  width: 80px;
+  height: 80px;
+  background: rgba(34, 197, 94, 0.1);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
+  animation: scaleIn 0.5s ease;
+}
+
+.success-check {
+  font-size: 40px;
+  color: #22c55e;
+}
+
+.success-title {
+  font-family: 'Playfair Display', serif;
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #22c55e;
+  text-align: center;
+  margin-bottom: 0.5rem;
+}
+
+.success-subtitle {
+  text-align: center;
+  color: #9e9b94;
+  margin-bottom: 1.5rem;
+}
+
+.success-amount {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #22c55e;
+}
+
+.tx-hash {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+}
+
+/* Expired State */
+.expired-icon {
+  font-size: 64px;
+  text-align: center;
+  margin-bottom: 1rem;
+  opacity: 0.5;
+}
+
+.expired-title {
+  font-family: 'Playfair Display', serif;
+  font-size: 1.75rem;
+  font-weight: 700;
+  text-align: center;
+  color: #ef4444;
+  margin-bottom: 0.5rem;
+}
+
+.expired-subtitle {
+  text-align: center;
+  color: #9e9b94;
+  margin-bottom: 1.5rem;
+}
+
+/* Buttons */
+.portal-btn {
+  padding: 0.75rem 1.5rem;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+}
+
+.portal-btn-primary {
+  background: #f5a623;
+  color: #0a0a0b;
+}
+
+.portal-btn-primary:hover {
+  background: #e8931a;
+  transform: translateY(-1px);
+}
+
+.portal-btn-secondary {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: #9e9b94;
+}
+
+.portal-btn-secondary:hover {
+  background: #18181d;
+  color: #f0ede8;
+}
+
+.confirmed-actions,
+.expired-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin: 1.5rem 0;
+}
+
+/* Loading State */
+.loading-state {
+  text-align: center;
+  padding: 3rem;
+}
+
+.loading-spinner {
+  width: 48px;
+  height: 48px;
+  border: 3px solid rgba(245, 166, 35, 0.2);
+  border-top-color: #f5a623;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 1rem;
+}
+
+/* Error State */
+.error-state {
+  text-align: center;
+  padding: 2rem;
+}
+
+.error-icon {
+  font-size: 48px;
+  margin-bottom: 1rem;
+  opacity: 0.5;
+}
+
+.error-state h2 {
+  font-family: 'Playfair Display', serif;
+  font-size: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.error-state p {
+  color: #9e9b94;
+  margin-bottom: 1.5rem;
+}
+
+/* Powered By */
+.powered-by {
+  text-align: center;
+  font-size: 0.65rem;
+  color: #5a5750;
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.powered-by strong {
+  color: #f5a623;
+  font-weight: 600;
+}
+
+/* Animations */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    transform: scale(0);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .payment-portal {
+    padding: 1rem;
+  }
+  
+  .payment-container {
+    padding: 1.5rem;
+  }
+  
+  .amount-value {
+    font-size: 2rem;
+  }
+  
+  .wallet-buttons {
+    flex-wrap: wrap;
+  }
+  
+  .address-value {
+    flex-direction: column;
+  }
+  
+  .copy-btn {
+    width: 100%;
+  }
+}

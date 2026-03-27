@@ -1,0 +1,235 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Users — merchant account holders
+model User {
+  id                    String    @id @default(cuid())
+  email                 String    @unique
+  password              String?   // nullable for Google-only users
+  firstName             String
+  lastName              String
+  googleId              String?   @unique
+  emailVerified         Boolean   @default(false)
+  verificationTokenHash String?   @map("verification_token_hash")
+  verificationExpiresAt DateTime? @map("verification_expires_at")
+  createdAt             DateTime  @default(now())
+  merchant              Merchant?
+  role                  UserRole  @default(USER)
+  resetToken            String?
+  resetExpires          DateTime?
+  passwordChangedAt     DateTime?
+  adminActions          AdminAction[]
+  supportResponses      SupportResponse[] @relation("SupportResponses")
+  notifications         Notification[]
+}
+
+// Merchants — business profiles
+model Merchant {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeName      String
+  slug           String   @unique
+  btcpayStoreId  String?
+  plan           Plan     @default(FREE)
+  logoUrl        String?
+  createdAt      DateTime @default(now())
+  invoices       Invoice[]
+  customers      Customer[]
+  staff          StaffMember[]
+  supportTickets SupportTicket[]
+}
+
+// Invoices — the core transaction record
+model Invoice {
+  id           String        @id @default(cuid())
+  invoiceNum   String        @unique
+  merchantId   String
+  merchant     Merchant      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  customerId   String?
+  customer     Customer?     @relation(fields: [customerId], references: [id])
+  amount       Float         @map("amount")
+  currency     String        @default("USDT")
+  reference    String
+  status       InvoiceStatus @default(PENDING)
+  btcpayId     String?
+  paymentAddr  String?
+  txHash       String?
+  expiresAt    DateTime
+  settledAt    DateTime?
+  createdAt    DateTime      @default(now())
+
+  // Indexes — every dashboard query filters by merchantId + status or createdAt
+  @@index([merchantId, createdAt])
+  @@index([merchantId, status, createdAt])
+  @@index([merchantId, status, settledAt])
+  @@index([customerId])
+}
+
+// Customers — merchant's customer directory
+model Customer {
+  id           String   @id @default(cuid())
+  merchantId   String
+  merchant     Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  name         String
+  email        String?
+  phone        String?
+  totalPaid    Float    @default(0)
+  invoiceCount Int      @default(0)
+  createdAt    DateTime @default(now())
+  invoices     Invoice[]
+
+  @@index([merchantId])
+  @@index([merchantId, createdAt])
+  @@index([merchantId, name])
+}
+
+// Staff — team members with role-based access
+model StaffMember {
+  id                 String   @id @default(cuid())
+  merchantId         String
+  merchant           Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  email              String
+  role               Role     @default(CASHIER)
+  canCreateInvoices  Boolean  @default(true)
+  canViewReports     Boolean  @default(false)
+  canManageStaff     Boolean  @default(false)
+  canExportData      Boolean  @default(false)
+  canEditSettings    Boolean  @default(false)
+  createdAt          DateTime @default(now())
+
+  @@index([merchantId])
+  @@index([merchantId, createdAt])
+  @@index([merchantId, email])
+}
+
+enum InvoiceStatus {
+  PENDING
+  PAID
+  EXPIRED
+  CANCELLED
+}
+
+enum Role {
+  OWNER
+  MANAGER
+  CASHIER
+}
+
+enum Plan {
+  FREE
+  PRO
+  STORE
+  ENTERPRISE
+}
+
+// Admin Action Log
+model AdminAction {
+  id          String   @id @default(cuid())
+  adminId     String?
+  admin       User?    @relation(fields: [adminId], references: [id], onDelete: SetNull)
+  action      String   // "reset_password", "suspend_merchant", "mark_invoice_paid", etc.
+  targetType  String   // "merchant", "invoice", "user"
+  targetId    String
+  metadata    Json?    // Additional details like old status, new status
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  @@index([adminId, createdAt])
+}
+
+// Support Ticket
+model SupportTicket {
+  id          String   @id @default(cuid())
+  merchantId  String
+  merchant    Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  subject     String
+  message     String
+  status      TicketStatus @default(OPEN)
+  priority    TicketPriority @default(MEDIUM)
+  assignedTo  String?  // Admin ID
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  responses   SupportResponse[]
+
+  @@index([merchantId, createdAt])
+  @@index([merchantId, status])
+}
+
+model SupportResponse {
+  id          String   @id @default(uuid())
+  ticketId    String
+  ticket      SupportTicket @relation(fields: [ticketId], references: [id])
+  adminId     String?
+  admin       User?    @relation("SupportResponses", fields: [adminId], references: [id])
+  isFromAdmin Boolean  @default(true)
+  message     String   @db.Text
+  createdAt   DateTime @default(now())
+}
+
+model FeatureFlag {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String
+  isEnabled   Boolean  @default(false) @map("is_enabled")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("feature_flags")
+}
+
+model SystemLog {
+  id        String   @id @default(uuid())
+  level     String   @default("info") // info, warn, error
+  message   String
+  details   Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("system_logs")
+  @@index([createdAt])
+}
+
+
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String   // "new_ticket" | "ticket_reply"
+  title     String
+  body      String   @db.Text
+  isRead    Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead, createdAt])
+}
